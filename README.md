@@ -1,85 +1,140 @@
 # fnr-guard
 
-Stopper commits som inneholder gyldige fødselsnumre eller D-numre. Det er et siste vern mot at persondata om ekte personer havner i git.
+Stopper gyldige fødselsnumre og D-numre før de havner i git. Du kan kjøre fnr-guard som pre-commit-hook, som GitHub Action eller som engangsskanning av et repo og hele historikken.
 
-## Hva som stoppes
+Utskriften viser aldri selve nummeret, bare fil, linje og type.
 
-| Type | Eksempel på kilde | Resultat |
+| Type | Typisk kilde | Resultat |
 |---|---|---|
 | Fødselsnummer (fnr) | ekte person | 🛑 stoppes |
 | D-nummer (dag + 40) | ekte person | 🛑 stoppes |
-| H-nummer (måned + 40) | Dolly | ✅ slipper gjennom |
-| T-nummer (måned + 80) | Tenor | ✅ slipper gjennom |
+| H-nummer (måned + 40) | Dolly | ✅ slipper gjennom, med mindre du slår det på |
+| T-nummer (måned + 80) | Tenor | ✅ slipper gjennom, med mindre du slår det på |
 | Ugyldige tall, som `12345678901` | mock | ✅ slipper gjennom |
 
-Numrene valideres med en kopi av [@navikt/fnrvalidator](https://github.com/navikt/fnrvalidator) v2.2.1 i `fnrvalidator.mjs`. Hooken trenger derfor bare Node, ingen `npm install`. Skanneren finner 11 siffer etter hverandre, også med mellomrom, bindestrek eller punktum mellom de 6 første og de 5 siste. Filnavn skannes også. PDF-er skannes når `pdftotext` er installert (`brew install poppler`).
+Krever Node 20 eller nyere. fnr-guard har ingen avhengigheter.
 
-Utskriften inneholder aldri selve nummeret, bare fil, linje og type.
+## Kom i gang
 
-## Installasjon
+### Før du starter: tilgang til GitHub Packages
 
-`scripts/clone-repos.sh` og `./sync.sh` installerer hooken automatisk. Du kan også kjøre den selv:
+Pakken ligger på GitHub Packages. GitHub krever token også for å installere public pakker derfra. Lag et [classic personal access token](https://github.com/settings/tokens) med `read:packages`, aktiver SSO for navikt, og legg dette i `~/.npmrc`:
+
+```
+@navikt:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=<token>
+```
+
+GitHub Action-en trenger ikke token.
+
+### 1. Pre-commit-hook
 
 ```sh
-./scripts/install-git-hooks.sh          # hopper over repoer med egen core.hooksPath
-./scripts/install-git-hooks.sh --force  # overstyrer
-./scripts/install-git-hooks.sh --status # viser om hooken er aktiv i hvert repo
+npm install --global @navikt/fnr-guard
+cd mitt-repo
+fnr-guard init       # lager .fnr-guard.json ut fra mappestrukturen
+fnr-guard install    # installerer hooken
 ```
 
-`scripts/doctor.sh` kjører også statussjekken.
+Sjekk inn `.fnr-guard.json`. Fra nå av stopper hooken commits med fødselsnumre.
 
-Skriptet setter `core.hooksPath` i root-repoet og alle Git-repoer under `repos/` til `scripts/git-hooks/`. Hookene der sender videre til repoets egne hooker i `.git/hooks` (`commit-msg`, `pre-push` osv.), så de virker som før. fnr-guard kjører i `pre-commit` og `pre-merge-commit`. Mangler Node, stopper hooken commiten.
+Bruker repoet husky eller lefthook, endrer `install` ingenting og viser i stedet linjen du skal legge inn selv. Se [docs/pre-commit.md](docs/pre-commit.md).
 
-## CI
-
-`git commit --no-verify` hopper over hooken. Derfor kjører hvert repo samme sjekk i GitHub Actions. CI skanner hvert commit i PR-en eller pushen for seg, også merge-commits. Et nummer som legges til i ett commit og fjernes i det neste, blir dermed funnet. Kopier `caller-workflow.yml` til `.github/workflows/fnr-guard.yml` og bytt `REPLACE_WITH_SHA` med en commit-SHA fra `main` i watson-developer.
-
-## Unntak
-
-Et nummer som er bekreftet syntetisk, men likevel gyldig som fnr eller D-nummer, kan føres i `.fnr-allowlist` i roten av repoet:
-
-```
-# Kilde: <hvor nummeret kommer fra, og hvem som har bekreftet at det er syntetisk>
-<11 siffer>
-```
-
-Hold filen tom så langt det går. Et gyldig nummer kan tilhøre en ekte person, og da publiserer unntakslisten det. Bytt heller til et nummer fra Dolly eller Tenor.
-
-## Manuell skanning
-
-Kjør fra roten av repoet som skal skannes:
+### 2. Engangsskanning
 
 ```sh
-node <watson-developer>/scripts/fnr-guard/scan.mjs --all       # alle sporede filer nå
-node <watson-developer>/scripts/fnr-guard/scan.mjs --history   # hele historikken, alle brancher
+npx @navikt/fnr-guard --all       # alle sporede filer nå
+npx @navikt/fnr-guard --history   # hver commit i hele historikken, alle brancher
 ```
 
-### Eksportere numrene for gjennomgang
+### 3. GitHub Actions
 
-For å sjekke om numrene tilhører ekte personer, kan du skrive dem til en fil. Kjør fra roten av watson-developer:
+`.github/workflows/fnr-guard.yml`:
 
-```sh
-node scripts/fnr-guard/eksporter-funn.mjs ~/fnr-funn.txt --history [repo-sti ...]
+```yaml
+name: fnr-guard
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  fnr-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@<sha> # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: navikt/fnr-guard@<sha> # v1
 ```
 
-Uten repo-stier skanner skriptet alle repoene i `repos/`. Terminalen viser bare antall funn per repo. Fila viser hvert nummer på tvers av repoene, og deretter alle funn med repo, commit, fil og linje.
+Bytt `<sha>` med commit-SHA-en til en release. Se [docs/github-actions.md](docs/github-actions.md).
 
-⚠️ Fila inneholder persondata hvis numrene er ekte. Den får rettigheter `600`, og skriptet nekter å legge den i et git-repo. Slett den når du er ferdig.
+## Hooken advarer tidlig, CI håndhever
 
-## Når CI finner et nummer
+`git commit --no-verify` hopper over hooken. Derfor er det GitHub Action-en som faktisk håndhever regelen. Gjør jobben til en påkrevd sjekk med branch protection. CI leser config fra base-branchen, så en PR kan ikke svekke config og legge inn et nummer i samme endring.
 
-Da er nummeret allerede på GitHub. Behandle det som et personvernavvik, ikke som en vanlig byggfeil:
+## Første kjøring
 
-1. Ikke merge. Lukk PR-en.
-2. Meld avviket i Navs avvikssystem.
-3. Fjern nummeret fra historikken med `git filter-repo`, og be GitHub Support fjerne cachede visninger og PR-referanser.
+Finnes det ingen `.fnr-guard.json`, lager fnr-guard en ut fra mappestrukturen og avslutter med exit-kode 1. Se over fila, sjekk den inn og kjør på nytt. Hooks og CI skriver aldri filer. Der brukes standardverdiene når config mangler.
+
+`init` gjenkjenner:
+
+- flere git-repoer under én mappe, for eksempel `repos/*`
+- monorepo-workspaces i npm, pnpm, Gradle og Go
+- mapper med generert innhold, som `node_modules`, `build` og `dist`
+- eksisterende oppsett med husky, lefthook eller pre-commit
+
+## Når et tall ser ut som et fødselsnummer, men ikke er det
+
+Bruk helst numre fra [Dolly](https://dolly.ekstern.dev.nav.no) eller Tenor. Må tallet likevel stå, legg en markør på samme linje:
+
+```kotlin
+val id = "…" // fnr-guard-ignore: ID fra testmiljø, ikke et identnummer
+```
+
+Se [docs/unntak.md](docs/unntak.md).
+
+## Dokumentasjon
+
+- [Konfigurasjon](docs/konfigurasjon.md)
+- [Pre-commit, husky og lefthook](docs/pre-commit.md)
+- [GitHub Actions](docs/github-actions.md)
+- [Unntak](docs/unntak.md)
+- [Når fnr-guard finner et nummer](docs/nar-noe-blir-funnet.md)
+
+## Kommandoer
+
+| Kommando | Hva den gjør |
+|---|---|
+| `fnr-guard --staged` | Skanner endringer som er lagt til for commit |
+| `fnr-guard --range A..B` | Skanner hver commit i B som ikke er i A |
+| `fnr-guard --all` | Skanner alle sporede filer i alle roots |
+| `fnr-guard --history` | Skanner hver commit i historikken, alle brancher |
+| `fnr-guard init [--force]` | Lager `.fnr-guard.json` |
+| `fnr-guard install [--force]` | Installerer hooken i alle roots |
+| `fnr-guard uninstall` | Fjerner hooken |
+| `fnr-guard status` | Viser om config er gyldig og hooken er aktiv |
+
+Exit-kode 0 betyr ingen funn, 1 betyr funn (eller at config nettopp ble laget), og 2 betyr feil.
+
+## Slik virker det
+
+fnr-guard finner 11 siffer på rad, også med mellomrom, bindestrek eller punktum mellom de seks første og de fem siste. Den validerer numrene med en kopi av [@navikt/fnrvalidator](https://github.com/navikt/fnrvalidator) (`src/fnrvalidator.mjs`). Filnavn skannes også. PDF-er skannes når `pdftotext` er installert (`brew install poppler`).
 
 ## Utvikling
 
 ```sh
-cd scripts/fnr-guard && npm test
+npm test
 ```
 
-Ved oppdatering av `fnrvalidator.mjs`: sammenlign med ny versjon av `validator.ts` i fnrvalidator og kjør testene.
+Testene lager gyldige numre mens de kjører. Skriv aldri et gyldig fødselsnummer rett inn i en testfil. Da stopper fnr-guard sin egen commit, og nummeret kan tilhøre en ekte person.
 
-Testene lager gyldige numre mens de kjører. Skriv aldri et gyldig fnr rett inn i en testfil, for da stopper hooken sin egen commit.
+Ved oppdatering av `src/fnrvalidator.mjs`: sammenlign med ny versjon av `validator.ts` i fnrvalidator og kjør testene.
+
+## Eierskap
+
+Team Holmes eier repoet. Spørsmål og feil meldes som issue. Sikkerhetsproblemer meldes som beskrevet i [SECURITY.md](SECURITY.md).

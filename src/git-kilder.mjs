@@ -10,7 +10,7 @@
 //   - arbeidstre(): alle sporede filer slik de er nå.
 
 import { execFileSync } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, readlinkSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 
 const MAKS_BUFFER = 1024 * 1024 * 1024;
@@ -148,12 +148,23 @@ export function* endredeFiler(kilde, git = lagGit()) {
   }
 }
 
-/** Gir { sti, les } for hver sporet fil som finnes i arbeidstreet. */
+/**
+ * Gir { sti, storrelse, full, les } for hver sporet fil som finnes i
+ * arbeidstreet. Symlenker følges aldri: innholdet er lenkemålet som tekst,
+ * slik git selv lagrer det. Slik kan en lenke verken peke ut av repoet eller
+ * skjule innhold.
+ */
 export function* arbeidstre(git = lagGit(), cwd = process.cwd()) {
   for (const sti of git.tekst(["ls-files", "-z"]).split("\0").filter(Boolean)) {
     const full = join(cwd, sti);
-    // Slettede filer og submoduler (kataloger) har ikke innhold å skanne
-    yield { sti, les: () => (statSync(full, { throwIfNoEntry: false })?.isFile() ? readFileSync(full) : null) };
+    const info = lstatSync(full, { throwIfNoEntry: false });
+    if (!info) continue; // slettet i arbeidstreet
+    if (info.isSymbolicLink()) {
+      yield { sti, storrelse: 0, full, symlenke: true, les: () => Buffer.from(readlinkSync(full), "utf8") };
+    } else if (info.isFile()) {
+      yield { sti, storrelse: info.size, full, les: () => readFileSync(full) };
+    }
+    // Kataloger (submoduler) har ikke innhold å skanne
   }
 }
 

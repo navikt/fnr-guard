@@ -1,8 +1,29 @@
 {
-  "name": "fnr-guard",
-  "private": true,
-  "type": "module",
+  "name": "@navikt/fnr-guard",
+  "version": "1.0.0",
   "description": "Stopper commits som inneholder gyldige fødselsnumre eller D-numre",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/navikt/fnr-guard.git"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "fnr-guard": "bin/fnr-guard.mjs"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "schema/",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "test": "node --test"
   }

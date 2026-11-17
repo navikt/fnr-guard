@@ -1,0 +1,99 @@
+# fnr-guard som GitHub Action.
+#
+# Skanner hvert commit i PR-en eller pushen for gyldige fødselsnumre og
+# D-numre. Config leses fra base-branchen, slik at en PR ikke kan svekke
+# config og legge inn et nummer i samme endring.
+#
+# Krav i workflowen som bruker action-en:
+#   - actions/checkout med fetch-depth: 0 (hele historikken trengs for å
+#     skanne hvert commit) og persist-credentials: false.
+#   - permissions: contents: read holder.
+#
+# Se docs/github-actions.md.
+
+name: fnr-guard
+description: Stopper gyldige fødselsnumre og D-numre før de havner i git
+author: navikt
+
+branding:
+  icon: shield
+  color: red
+
+inputs:
+  modus:
+    description: "auto (commits i PR eller push), all (alle sporede filer) eller history (hele historikken)"
+    required: false
+    default: auto
+  node-version:
+    description: Node-versjon fnr-guard kjøres med
+    required: false
+    default: "20"
+  config-fra-base:
+    description: Les .fnr-guard.json fra base-branchen i stedet for fra PR-en. Bør alltid være true.
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Sett opp Node
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        package-manager-cache: false
+        node-version: ${{ inputs.node-version }}
+
+    - name: Kjør fnr-guard
+      shell: bash
+      env:
+        CI: "true"
+        MODUS: ${{ inputs.modus }}
+        CONFIG_FRA_BASE: ${{ inputs.config-fra-base }}
+        HENDELSE: ${{ github.event_name }}
+        PR_BASE: ${{ github.event.pull_request.base.sha }}
+        PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        MG_BASE: ${{ github.event.merge_group.base_sha }}
+        MG_HEAD: ${{ github.event.merge_group.head_sha }}
+        PUSH_FOR: ${{ github.event.before }}
+        PUSH_ETTER: ${{ github.sha }}
+      run: |
+        set -euo pipefail
+        bin="$GITHUB_ACTION_PATH/bin/fnr-guard.mjs"
+
+        if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+          echo "::error::fnr-guard trenger hele historikken. Sett fetch-depth: 0 på actions/checkout."
+          exit 2
+        fi
+
+        base=""
+        head=""
+        if [ "$HENDELSE" = "pull_request" ]; then
+          base="$PR_BASE"
+          head="$PR_HEAD"
+        elif [ "$HENDELSE" = "merge_group" ]; then
+          base="$MG_BASE"
+          head="$MG_HEAD"
+        else
+          base="$PUSH_FOR"
+          head="$PUSH_ETTER"
+        fi
+
+        if [ "$CONFIG_FRA_BASE" = "true" ] && [ -n "$base" ] && ! [[ "$base" =~ ^0+$ ]]; then
+          export FNR_GUARD_CONFIG_REF="$base"
+        fi
+
+        case "$MODUS" in
+          auto)
+            if [ -z "$base" ] || [[ "$base" =~ ^0+$ ]] || [ -z "$head" ]; then
+              # Ny branch eller ukjent hendelse: skann alt som finnes nå
+              node "$bin" scan --all
+            else
+              node "$bin" scan --range "$base..$head"
+            fi
+            ;;
+          all) node "$bin" scan --all ;;
+          history) node "$bin" scan --history ;;
+          *)
+            echo "::error::Ugyldig modus. Bruk auto, all eller history."
+            exit 2
+            ;;
+        esac

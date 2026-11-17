@@ -7,10 +7,13 @@ import { mkdtempSync, writeFileSync, rmSync, mkdirSync, chmodSync, statSync, rea
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { blokkertType, skannTekst, lesUnntak, masker } from "./fnr-guard.mjs";
-import { parseDiff, parseNavneliste } from "./git-kilder.mjs";
+import { blokkertType, skannTekst, masker } from "../src/kjerne.mjs";
+import { parseDiff, parseNavneliste } from "../src/git-kilder.mjs";
 
 const HER = dirname(fileURLToPath(import.meta.url));
+const BIN = join(HER, "..", "bin", "fnr-guard.mjs");
+// CI=true: ingen config genereres ved første kjøring. Uten base-ref leses config fra disk.
+const ENV = { ...process.env, CI: "true", GITHUB_ACTIONS: "", FNR_GUARD_CONFIG_REF: "" };
 
 /** Lager et gyldig 11-sifret nummer fra 6 datosiffer ved å finne individnummer med gyldige kontrollsiffer. */
 function lagNummer(dato6, start = 100) {
@@ -68,27 +71,18 @@ test("treffer ikke når nummeret er del av et lengre tall", () => {
   assert.deepEqual(skannTekst(`${FNR}9`), []);
 });
 
-test("unntakslisten slipper gjennom bare oppførte numre", () => {
-  const unntak = lesUnntak(`# Bekreftet syntetisk, kilde: test\n${FNR}  # kommentar\n\n`);
-  assert.deepEqual(skannTekst(`${FNR} ${FNR2}`, unntak), [{ linje: 1, type: "fnr" }]);
-});
-
-test("ugyldig linje i unntakslisten gir feil", () => {
-  assert.throws(() => lesUnntak("1234"), /linje 1/);
-});
-
 test("masker skjuler blokkerte numre", () => {
   assert.equal(masker(`data/${FNR}.json`), "data/***********.json");
-  assert.equal(masker(`data/${TNR}.json`), `data/${TNR}.json`);
+  assert.equal(masker(`data/${TNR}.json`), "data/***********.json"); // alle gyldige typer maskeres
+  assert.equal(masker("data/12345678901.json"), "data/12345678901.json");
 });
 
-test("masker skjuler også numre i unntakslisten", () => {
-  // Unntak styrer blokkering, ikke hva som kan stå i logger
+test("masker skjuler numre i feilmeldinger", () => {
   assert.equal(masker(`feil i ${FNR}`), "feil i ***********");
 });
 
 
-test("scan.mjs --staged: stopper commit, skriver ikke nummeret og slipper unntak", () => {
+test("scan --staged: stopper commit, skriver ikke nummeret og slipper linje med markør", () => {
   const repo = mkdtempSync(join(tmpdir(), "fnr-guard-"));
   try {
     const g = (...a) => execFileSync("git", a, { cwd: repo });
@@ -96,15 +90,15 @@ test("scan.mjs --staged: stopper commit, skriver ikke nummeret og slipper unntak
     writeFileSync(join(repo, "ok.json"), `{"a": "${HNR}", "b": "12345678901"}\n`);
     writeFileSync(join(repo, "feil.json"), `{\n"fnr": "${FNR}"\n}\n`);
     g("add", ".");
-    const kjør = () => spawnSync("node", [join(HER, "scan.mjs"), "--staged"], { cwd: repo, encoding: "utf8" });
+    const kjør = () => spawnSync("node", [BIN, "scan", "--staged"], { cwd: repo, encoding: "utf8", env: ENV });
 
     const r = kjør();
     assert.equal(r.status, 1);
     assert.match(r.stderr, /feil\.json:2 {2}type=fnr/);
     assert.doesNotMatch(r.stdout + r.stderr, new RegExp(FNR.slice(0, 6)));
 
-    writeFileSync(join(repo, ".fnr-allowlist"), `${FNR} # syntetisk, kilde: test\n`);
-    g("add", ".fnr-allowlist");
+    writeFileSync(join(repo, "feil.json"), `{\n"fnr": "${FNR}" // fnr-guard-ignore: generert i test, ikke ekte\n}\n`);
+    g("add", ".");
     assert.equal(kjør().status, 0);
   } finally {
     rmSync(repo, { recursive: true, force: true });
@@ -118,7 +112,7 @@ function lagRepo() {
   g("init", "-q", "-b", "main");
   return { repo, g };
 }
-const kjørScan = (repo, ...args) => spawnSync("node", [join(HER, "scan.mjs"), ...args], { cwd: repo, encoding: "utf8" });
+const kjørScan = (repo, ...args) => spawnSync("node", [BIN, "scan", ...args], { cwd: repo, encoding: "utf8", env: ENV });
 
 test("parseDiff: innholdslinje som starter med ++ er ikke et filhode", () => {
   const diff = [
@@ -135,7 +129,7 @@ test("parseDiff: innholdslinje som starter med ++ er ikke et filhode", () => {
   assert.equal(linjer[1].fil, "a.txt");
 });
 
-test("scan.mjs --staged: finner fnr på linje som starter med ++", () => {
+test("scan --staged: finner fnr på linje som starter med ++", () => {
   const { repo, g } = lagRepo();
   try {
     writeFileSync(join(repo, "a.txt"), `++ ${FNR}\n`);
@@ -148,7 +142,7 @@ test("scan.mjs --staged: finner fnr på linje som starter med ++", () => {
   }
 });
 
-test("scan.mjs --range: finner fnr som legges til og fjernes i neste commit", () => {
+test("scan --range: finner fnr som legges til og fjernes i neste commit", () => {
   const { repo, g } = lagRepo();
   try {
     g("commit", "-q", "--allow-empty", "-m", "start");
@@ -166,7 +160,7 @@ test("scan.mjs --range: finner fnr som legges til og fjernes i neste commit", ()
   }
 });
 
-test("scan.mjs --range og --history: finner fnr som bare finnes i en merge-commit", () => {
+test("scan --range og --history: finner fnr som bare finnes i en merge-commit", () => {
   const { repo, g } = lagRepo();
   try {
     writeFileSync(join(repo, "a.txt"), "start\n");
@@ -191,7 +185,7 @@ test("scan.mjs --range og --history: finner fnr som bare finnes i en merge-commi
   }
 });
 
-test("scan.mjs: feilmeldinger maskerer fnr i filstier", () => {
+test("scan: feilmeldinger maskerer fnr i filstier", () => {
   const { repo } = lagRepo();
   try {
     const r = kjørScan(repo, "--range", `${FNR}..HEAD`);
@@ -200,44 +194,6 @@ test("scan.mjs: feilmeldinger maskerer fnr i filstier", () => {
     assert.match(r.stderr, /\*{11}/);
   } finally {
     rmSync(repo, { recursive: true, force: true });
-  }
-});
-
-test("hooks: commit-msg i .git/hooks kjører fortsatt med core.hooksPath", () => {
-  const { repo, g } = lagRepo();
-  try {
-    const egen = join(repo, ".git", "hooks", "commit-msg");
-    writeFileSync(egen, "#!/bin/sh\ntouch \"$(git rev-parse --git-dir)/commit-msg-kjort\"\n");
-    chmodSync(egen, 0o755);
-    writeFileSync(join(repo, "a.txt"), "a\n");
-    execFileSync("git", ["-c", `core.hooksPath=${join(HER, "..", "git-hooks")}`, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "add", "."], { cwd: repo });
-    execFileSync("git", ["-c", `core.hooksPath=${join(HER, "..", "git-hooks")}`, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "a"], { cwd: repo });
-    assert.ok(existsSync(join(repo, ".git", "commit-msg-kjort")));
-  } finally {
-    rmSync(repo, { recursive: true, force: true });
-  }
-});
-
-test("eksporter-funn.mjs: overskriver aldri en eksisterende fil og lager fil med 600", () => {
-  const { repo, g } = lagRepo();
-  const ut = mkdtempSync(join(tmpdir(), "fnr-ut-"));
-  try {
-    writeFileSync(join(repo, "a.txt"), `++ ${FNR}\n`);
-    g("add", "."); g("commit", "-q", "-m", "a");
-    const fil = join(ut, "funn.txt");
-    const r = spawnSync("node", [join(HER, "eksporter-funn.mjs"), fil, "--history", repo], { encoding: "utf8" });
-    assert.equal(r.status, 0, r.stderr);
-    assert.doesNotMatch(r.stdout + r.stderr, new RegExp(FNR));
-    assert.equal(statSync(fil).mode & 0o777, 0o600);
-    assert.match(readFileSync(fil, "utf8"), new RegExp(FNR));
-
-    writeFileSync(join(ut, "finnes.txt"), "behold");
-    const r2 = spawnSync("node", [join(HER, "eksporter-funn.mjs"), join(ut, "finnes.txt"), repo], { encoding: "utf8" });
-    assert.equal(r2.status, 2);
-    assert.equal(readFileSync(join(ut, "finnes.txt"), "utf8"), "behold");
-  } finally {
-    rmSync(repo, { recursive: true, force: true });
-    rmSync(ut, { recursive: true, force: true });
   }
 });
 
@@ -254,7 +210,7 @@ test("parseNavneliste: filnavn kan ikke forveksles med commit-markør", () => {
   ]);
 });
 
-test("scan.mjs: finner fnr i filnavn som starter med @@COMMIT, staged og i range", () => {
+test("scan: finner fnr i filnavn som starter med @@COMMIT, staged og i range", () => {
   const { repo, g } = lagRepo();
   try {
     g("commit", "-q", "--allow-empty", "-m", "start");

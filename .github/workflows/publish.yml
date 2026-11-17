@@ -1,0 +1,43 @@
+name: Publiser
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  publiser:
+    name: Publiser til GitHub Packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          package-manager-cache: false
+          node-version: "22"
+          registry-url: https://npm.pkg.github.com
+          scope: "@navikt"
+      - name: Kjør tester
+        run: npm test
+      - name: Versjon i package.json må matche taggen
+        env:
+          TAGG: ${{ github.event.release.tag_name }}
+        run: |
+          versjon="$(node -p 'require("./package.json").version')"
+          if [ "v$versjon" != "$TAGG" ]; then
+            echo "::error::package.json har $versjon, men taggen er $TAGG"
+            exit 1
+          fi
+      - name: Publiser
+        run: npm publish --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
