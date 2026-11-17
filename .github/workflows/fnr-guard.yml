@@ -21,4 +21,4 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Kjør fnr-guard fra dette repoet
-        uses: ./
+        uses: $/
