@@ -21,4 +21,6 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Kjør fnr-guard fra dette repoet
-        uses: ./
+        # Bytt til $/ når actionlint støtter self-repository-syntaksen (1.7.12 gjør ikke det).
+        # ./ er trygt her: checkout er eneste steg før, så ingenting annet kan ligge i arbeidsmappen.
+        uses: ./ # zizmor: ignore[self-repository]
