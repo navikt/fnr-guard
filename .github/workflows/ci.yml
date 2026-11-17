@@ -49,15 +49,7 @@ jobs:
           package-manager-cache: false
           node-version: "22"
       - name: Pakken inneholder bare det den skal
-        run: |
-          npm pack --dry-run --json > pakke.json
-          node -e '
-            const filer = JSON.parse(require("fs").readFileSync("pakke.json", "utf8"))[0].files.map((f) => f.path);
-            const lov = /^(bin\/|src\/|schema\/|README\.md$|LICENSE$|package\.json$)/;
-            const feil = filer.filter((f) => !lov.test(f) || /eksport/i.test(f));
-            if (feil.length) { console.error("Uventede filer i pakken:", feil); process.exit(1); }
-            console.log(`${filer.length} filer i pakken, alle tillatt`);
-          '
+        run: node scripts/sjekk-pakke.mjs
 
   lint:
     name: actionlint og zizmor
