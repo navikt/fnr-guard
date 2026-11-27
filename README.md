@@ -42,10 +42,14 @@ Bruker repoet husky eller lefthook, endrer `install` ingenting og viser i stedet
 
 ### 2. Engangsskanning
 
+Start med `--history` når du sjekker et repo for første gang. Da finner du også numre som er slettet fra dagens filer, men fortsatt ligger i Git-historikken.
+
 ```sh
-npx @navikt/fnr-guard --all       # alle sporede filer nå
 npx @navikt/fnr-guard --history   # hver commit i hele historikken, alle brancher
+npx @navikt/fnr-guard --all       # alle sporede filer nå, uten historikk
 ```
+
+`--all` inkluderer ikke Git-historikken. Det skanner sporede filer slik de ligger i arbeidstreet nå, ikke innhold som bare finnes i eldre commits. Se [Første kjøring](#første-kjøring) hvis repoet ikke har config ennå.
 
 ### 3. GitHub Actions
 
@@ -112,7 +116,7 @@ Se [docs/unntak.md](docs/unntak.md).
 |---|---|
 | `fnr-guard --staged` | Skanner endringer som er lagt til for commit |
 | `fnr-guard --range A..B` | Skanner hver commit i B som ikke er i A |
-| `fnr-guard --all` | Skanner alle sporede filer i alle roots |
+| `fnr-guard --all` | Skanner alle sporede filer i alle roots slik de er nå, uten historikk |
 | `fnr-guard --history` | Skanner hver commit i historikken, alle brancher |
 | `fnr-guard init [--force]` | Lager `.fnr-guard.json` |
 | `fnr-guard install [--force]` | Installerer hooken i alle roots |
